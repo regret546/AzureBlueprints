@@ -65,17 +65,16 @@ This solution follows a Hub-and-Spoke network design:
 
 ```
 iac-azure-bastion-hub-spoke/
-│
-├── main.tf
-├── variables.tf
-├── outputs.tf
-├── provider.tf
-│
+├── images/
 ├── modules/
 │   └── hub/
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── provider.tf
 ```
 
 ---
