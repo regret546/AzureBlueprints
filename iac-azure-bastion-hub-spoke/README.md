@@ -64,7 +64,7 @@ This solution follows a Hub-and-Spoke network design:
 ## Project Structure
 
 ```
-azure-bastion-hub-spoke/
+iac-azure-bastion-hub-spoke/
 │
 ├── main.tf
 ├── variables.tf
