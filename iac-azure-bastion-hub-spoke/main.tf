@@ -11,8 +11,11 @@ module "hub" {
   location            = var.primary_location
   resource_group_name = azurerm_resource_group.hub.name
 
+  # Dynamic Hub VNet CIDR (adjustable per environment)
   hub_vnet_address_space = ["10.200.0.0/20"]
-  bastion_subnet_prefix  = ["10.200.1.0/27"]
+
+  # Bastion subnet CIDR (can be provided or derived inside module)
+  bastion_subnet_prefix = ["10.200.1.0/27"]
 }
 
 
@@ -43,4 +46,26 @@ resource "azurerm_virtual_network_peering" "spoke_to_hub" {
   resource_group_name       = each.value.resource_group_name
   virtual_network_name      = each.value.name
   remote_virtual_network_id = module.hub.vnet_id
+}
+
+# Add NSG 
+resource "azurerm_network_security_group" "spoke_nsg" {
+  for_each = data.azurerm_virtual_network.spokes
+
+  name                = "nsg-${each.key}"
+  location            = each.value.resource_group_name.location
+  resource_group_name = each.value.resource_group_name
+
+  security_rule {
+    name                       = "Allow-Bastion-RDP-SSH"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_ranges    = ["22", "3389"]
+    source_address_prefix      = bastion_subnet_prefix
+    destination_address_prefix = "*"
+  }
+
 }
