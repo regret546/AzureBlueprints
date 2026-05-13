@@ -71,7 +71,7 @@ The solution enables secure, private access to virtual machines across environme
 ## Project Structure
 
 ```
-iac-azure-bastion-hub-spoke/
+azure-bastion-hub-spoke/
 │
 ├── main.tf
 ├── variables.tf
@@ -83,14 +83,6 @@ iac-azure-bastion-hub-spoke/
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
-│
-├── env/
-│   ├── dev/
-│   │   ├── backend.hcl
-│   │   └── terraform.tfvars
-│   ├── prod/
-│   │   ├── backend.hcl
-│   │   └── terraform.tfvars
 ```
 
 ---
