@@ -18,29 +18,19 @@ module "hub" {
   bastion_subnet_prefix = ["10.200.1.0/27"]
 }
 
-
-# Retrieve existing spoke VNets from input variable
-data "azurerm_virtual_network" "spokes" {
-  for_each = {
-    for vnet in var.spokes : vnet.name => vnet
-  }
-  name                = each.value.name
-  resource_group_name = each.value.resource_group_name
-}
-
 # Create peering from hub VNet to each spoke VNet
 resource "azurerm_virtual_network_peering" "hub_to_spoke" {
-  for_each = data.azurerm_virtual_network.spokes
+  for_each = var.spokes
 
   name                      = "hub-to-${each.key}"
   resource_group_name       = azurerm_resource_group.hub.name
   virtual_network_name      = module.hub.vnet_name
-  remote_virtual_network_id = each.value.id
+  remote_virtual_network_id = data.azurerm_virtual_network.spokes[each.key].id
 }
 
 # Create peering from each spoke VNet back to the hub VNet
 resource "azurerm_virtual_network_peering" "spoke_to_hub" {
-  for_each = data.azurerm_virtual_network.spokes
+  for_each = var.spokes
 
   name                      = "${each.key}-to-hub"
   resource_group_name       = each.value.resource_group_name
@@ -50,10 +40,10 @@ resource "azurerm_virtual_network_peering" "spoke_to_hub" {
 
 # Add NSG 
 resource "azurerm_network_security_group" "spoke_nsg" {
-  for_each = data.azurerm_virtual_network.spokes
+  for_each = var.spokes
 
   name                = "nsg-${each.key}"
-  location            = each.value.resource_group_name.location
+  location            = data.azurerm_virtual_network.spokes[each.key].location
   resource_group_name = each.value.resource_group_name
 
   security_rule {
@@ -64,7 +54,7 @@ resource "azurerm_network_security_group" "spoke_nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_ranges    = ["22", "3389"]
-    source_address_prefix      = bastion_subnet_prefix
+    source_address_prefix      = module.hub.bastion_subnet_prefix[0]
     destination_address_prefix = "*"
   }
 

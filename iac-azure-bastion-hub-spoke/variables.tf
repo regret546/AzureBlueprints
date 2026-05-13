@@ -10,7 +10,7 @@ variable "primary_location" {
 
 variable "spokes" {
   description = "List of existing VNets to peer with hub"
-  type = list(object({
+  type = map(object({
     name                = string
     resource_group_name = string
   }))

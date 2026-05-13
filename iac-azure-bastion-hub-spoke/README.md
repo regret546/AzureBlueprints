@@ -2,69 +2,76 @@
 
 ## Overview
 
-This project implements a centralized access architecture in Microsoft Azure using Terraform. It deploys a Hub virtual network with Azure Bastion and dynamically peers it with multiple existing VNets (spokes).
+This project implements a centralized access architecture in Microsoft Azure using Terraform.
 
-The goal is to provide secure, private access to virtual machines across environments without exposing public IP addresses, while optimizing cost by avoiding multiple Bastion deployments.
+It deploys a Hub virtual network with Azure Bastion and dynamically peers it with multiple existing VNets (spokes).
+
+The solution enables secure, private access to virtual machines across environments without exposing public IP addresses, while optimizing cost through a single, centralized Bastion deployment.
 
 ---
 
 ## Architecture
 
-This solution follows a Hub-and-Spoke network design:
+### Hub VNet
+- Hosts Azure Bastion  
+- Acts as the centralized access point  
 
-* **Hub VNet**
+### Spoke VNets (Existing)
+- Application or environment VNets  
+- Referenced dynamically via Terraform variables  
 
-  * Hosts Azure Bastion
-  * Acts as the centralized access point
+### VNet Peering
+- Connects Hub to multiple spokes  
+- Enables low-latency private connectivity  
 
-* **Spoke VNets (Existing)**
+### Network Security Groups (NSG)
+- Applied to spoke subnets  
+- Allows only Bastion-originated RDP/SSH access  
 
-  * Application or environment VNets
-  * Discovered dynamically via Terraform input
+---
 
-* **VNet Peering**
+## Key Flow
 
-  * Connects Hub to multiple spokes
-  * Enables private connectivity
+### Connection Flow
 
-### Key Flow
+1. User connects to Azure Portal  
+2. Accesses VM via Azure Bastion  
 
-1. User connects to Azure Portal
-2. Accesses VM via Azure Bastion
-3. Traffic flows:
+### Traffic Path
 
-   * User → Bastion (public endpoint)
-   * Bastion → Hub VNet
-   * Hub → Spoke VNet (via peering)
-   * Spoke → VM (private IP)
+- User → Bastion (public endpoint)  
+- Bastion → Hub VNet  
+- Hub → Spoke VNet (via peering)  
+- Spoke → VM (private IP)  
 
 ---
 
 ## Features
 
-* Centralized Azure Bastion deployment
-* Dynamic peering to multiple existing VNets
-* No public IP required for virtual machines
-* Scalable design using `for_each`
-* Infrastructure-as-Code using Terraform
-* Optional Bastion deployment for cost optimization
+- Centralized Azure Bastion deployment  
+- Dynamic peering using `for_each`  
+- No public IPs on virtual machines  
+- NSG enforcing Bastion-only access  
+- Environment-based structure (`env/dev`, `env/prod`)  
+- Remote state via `backend.hcl`  
+- Modular Terraform design  
 
 ---
 
 ## Use Cases
 
-* Secure remote access without exposing VMs to the internet
-* Organizations with multiple VNets across teams or environments
-* Centralized access control for Dev, QA, and Production
-* Cost optimization by reducing duplicate Bastion deployments
-* Integration with existing Azure infrastructure
+- Secure remote access without exposing VMs  
+- Multi-VNet enterprise environments  
+- Centralized access for Dev / QA / Prod  
+- Cost optimization using single Bastion  
+- Integration with existing Azure VNets  
 
 ---
 
 ## Project Structure
 
 ```
-azure-bastion-hub-spoke/
+iac-azure-bastion-hub-spoke/
 │
 ├── main.tf
 ├── variables.tf
@@ -76,32 +83,58 @@ azure-bastion-hub-spoke/
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
+│
+├── env/
+│   ├── dev/
+│   │   ├── backend.hcl
+│   │   └── terraform.tfvars
+│   ├── prod/
+│   │   ├── backend.hcl
+│   │   └── terraform.tfvars
 ```
 
 ---
 
 ## Inputs
 
-### Example: terraform.tfvars
+### Example: `terraform.tfvars`
 
-```
-application_name = "demo"
-primary_location = "East US"
+```hcl
+location            = "East Asia"
+resource_group_name = "rg-network-dev"
 
-spokes = [
-  {
-    name                = "vnet-app1"
-    resource_group_name = "rg-app1"
+bastion_subnet_cidr = "10.0.0.0/26"
+
+spokes = {
+  spoke1 = {
+    name                = "spoke1-vnet"
+    resource_group_name = "rg-spoke1-dev"
+    location            = "East Asia"
   },
-  {
-    name                = "vnet-app2"
-    resource_group_name = "rg-app2"
+  spoke2 = {
+    name                = "spoke2-vnet"
+    resource_group_name = "rg-spoke2-dev"
+    location            = "East Asia"
   }
-]
+}
 ```
+
 ---
 
-## Architecture
+## Backend Configuration
+
+### Example: `backend.hcl`
+
+```hcl
+resource_group_name  = "rg-tfstate"
+storage_account_name = "tfstatehubspoke123"
+container_name       = "tfstate"
+key                  = "bastion-hub-spoke-dev.tfstate"
+```
+
+---
+
+## Architecture Diagram
 
 ![Azure Bastion Hub Architecture](./images/architecture.png)
 
@@ -113,22 +146,37 @@ spokes = [
 
 Terraform provisions:
 
-* Resource Group
-* Hub VNet
-* AzureBastionSubnet
-* Public IP
-* Azure Bastion
+- Resource Group  
+- Hub VNet  
+- AzureBastionSubnet  
+- Public IP  
+- Azure Bastion  
 
-### 2. Discover Existing VNets
+---
 
-Uses Terraform data sources to reference VNets that were not created in this project.
+### 2. Reference Existing VNets
+
+Terraform uses variables to reference existing VNets instead of creating them.
+
+---
 
 ### 3. Create Dynamic Peering
 
-For each VNet defined in the input:
+For each spoke:
 
-* Hub → Spoke peering
-* Spoke → Hub peering
+- Hub → Spoke peering  
+- Spoke → Hub peering  
+
+---
+
+### 4. Apply Network Security Groups
+
+- NSG attached to spoke subnets  
+- Allows only:
+  - Port 22 (SSH)  
+  - Port 3389 (RDP)  
+  - Source: `AzureBastion`  
+- Denies all other inbound traffic  
 
 ---
 
@@ -136,71 +184,73 @@ For each VNet defined in the input:
 
 ### Initialize
 
-```
-terraform init
+```bash
+terraform init -backend-config=env/dev/backend.hcl
 ```
 
 ### Plan
 
-```
-terraform plan
+```bash
+terraform plan -var-file=env/dev/terraform.tfvars
 ```
 
 ### Apply
 
-```
-terraform apply
+```bash
+terraform apply -var-file=env/dev/terraform.tfvars
 ```
 
-### Destroy (optional)
+### Destroy
 
-```
-terraform destroy
+```bash
+terraform destroy -var-file=env/dev/terraform.tfvars
 ```
 
 ---
 
 ## Security Considerations
 
-* No public IPs required on virtual machines
-* Access is centralized through Azure Bastion
-* Reduces attack surface
-* Aligns with Zero Trust principles
+- No public IPs on VMs  
+- Bastion is the only access entry point  
+- NSG enforces least-privilege  
+- Reduced attack surface  
+- Zero Trust aligned  
 
 ---
 
 ## Cost Considerations
 
-Azure Bastion is billed hourly regardless of usage.
+Azure Bastion is billed hourly.
 
-This project supports:
+### Optimization Strategy
 
-* Centralized Bastion (reduce duplication)
-* Optional deployment pattern (enable/disable when needed)
+- Single centralized Bastion  
+- Shared across multiple VNets  
 
-Recommended:
+### Recommended Usage
 
-* Always-on for production
-* On-demand for dev/test environments
+- Production → Always on  
+- Dev/Test → Deploy on demand  
 
 ---
 
 ## Future Improvements
 
-* Network Security Groups (NSGs)
-* Azure Firewall integration
-* Private DNS zones
-* Logging and monitoring (Azure Monitor)
-* CI/CD pipeline for automated deployments
+- Azure Firewall  
+- Private DNS zones  
+- Azure Monitor integration  
+- CI/CD pipeline  
+- RBAC enhancements  
 
 ---
 
 ## Summary
 
-This project demonstrates a scalable and secure approach to managing remote access in Azure by combining:
+This project demonstrates:
 
-* Hub-and-Spoke architecture
-* Centralized Bastion access
-* Dynamic infrastructure integration
+- Hub-and-Spoke architecture  
+- Centralized Bastion access  
+- NSG-based security control  
+- Environment-based Terraform deployments  
 
-It is designed to reflect real-world enterprise scenarios where infrastructure already exists and needs to be securely integrated.
+It reflects real-world enterprise scenarios where existing infrastructure must be securely integrated.
