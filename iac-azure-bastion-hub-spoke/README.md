@@ -14,6 +14,8 @@ The solution enables secure, private access to virtual machines without exposing
 
 ## Architecture
 
+![Azure Bastion Hub-Spoke Architecture](images/architecture.png)
+
 ### Hub VNet
 
 * Hosts Azure Bastion
