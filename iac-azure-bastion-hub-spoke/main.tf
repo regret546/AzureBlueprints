@@ -25,7 +25,7 @@ resource "azurerm_virtual_network_peering" "hub_to_spoke" {
   name                      = "hub-to-${each.key}"
   resource_group_name       = azurerm_resource_group.hub.name
   virtual_network_name      = module.hub.vnet_name
-  remote_virtual_network_id = data.azurerm_virtual_network.spokes[each.key].id
+  remote_virtual_network_id = data.azurerm_virtual_network.spokes[each.value.name].id
 }
 
 # Create peering from each spoke VNet back to the hub VNet
@@ -43,7 +43,7 @@ resource "azurerm_network_security_group" "spoke_nsg" {
   for_each = var.spokes
 
   name                = "nsg-${each.key}"
-  location            = data.azurerm_virtual_network.spokes[each.key].location
+  location            = data.azurerm_virtual_network.spokes[each.value.name].location
   resource_group_name = each.value.resource_group_name
 
   security_rule {
