@@ -6,7 +6,7 @@ This project implements a centralized access architecture in Microsoft Azure usi
 
 It deploys a Hub virtual network with Azure Bastion and dynamically peers it with multiple **existing VNets (spokes)**.
 
-Spoke VNets are defined using a **map of objects**, and Terraform retrieves their actual properties (such as location and ID) directly from Azure using data sources. This ensures consistency and avoids configuration drift.
+Spoke VNets and their subnets are defined using a **map of objects**, and Terraform dynamically transforms this structure using a `local.tf` file to enable **per-subnet resource creation**.
 
 The solution enables secure, private access to virtual machines without exposing public IP addresses, while optimizing cost through a single, centralized Bastion deployment.
 
@@ -36,12 +36,40 @@ The solution enables secure, private access to virtual machines without exposing
 
 ### Network Security Groups (NSG)
 
-* Created per spoke
+* Created **per subnet (not per VNet)**
+* Attached directly to each subnet
 * Allows only:
 
   * SSH (22)
   * RDP (3389)
 * Source is restricted to the **Bastion subnet CIDR**
+
+---
+
+## Naming Convention
+
+This project uses a **generic, Bastion-focused naming convention**:
+
+```
+<scope>-<environment>-<role>-<resource>
+```
+
+### Examples
+
+| Resource       | Example                        |
+| -------------- | ------------------------------ |
+| Hub VNet       | `dev-hub-bastion-vnet`         |
+| Spoke VNet     | `dev-spoke-access-vnet`        |
+| Resource Group | `rg-dev-network`               |
+| Subnet         | `snet-client`, `snet-workload` |
+| NSG            | `nsg-dev-spoke-access-client`  |
+
+### Notes
+
+* `hub` → centralized Bastion layer
+* `spoke` → workload VNets
+* `access` / `bastion-target` → indicates Bastion usage
+* `snet-*` → Azure subnet naming standard
 
 ---
 
@@ -53,58 +81,87 @@ Spokes are defined as a map:
 
 ```hcl
 spokes = {
-  spoke1 = {
-    name                = "jodur-vnet"
-    resource_group_name = "jodur-rg"
-    location            = "southeastasia"
+  spoke_access = {
+    name                = "dev-spoke-access-vnet"
+    resource_group_name = "rg-dev-network"
+
+    subnets = {
+      client = {
+        name = "snet-client"
+      }
+      workload = {
+        name = "snet-workload"
+      }
+    }
   }
 }
 ```
 
-* `each.key` → logical identifier (`spoke1`)
-* `each.value.name` → actual Azure VNet name
+* `spoke_key` → logical identifier (`spoke_access`)
+* `subnet_key` → logical identifier (`client`, `workload`)
+* `name` → actual Azure resource name
 
 ---
 
-### 2. Data Source Transformation
+### 2. Use of `local.tf` (Flatten Pattern)
 
-The data source uses the **VNet name as key**:
+A `local.tf` file is used to transform nested maps into a flat structure:
 
 ```hcl
-data "azurerm_virtual_network" "spokes" {
-  for_each = {
-    for vnet in var.spokes : vnet.name => vnet
-  }
-
-  name                = each.value.name
-  resource_group_name = each.value.resource_group_name
+locals {
+  spoke_subnets = flatten([
+    for spoke_key, spoke in var.spokes : [
+      for subnet_key, subnet in spoke.subnets : {
+        spoke_key      = spoke_key
+        subnet_key     = subnet_key
+        vnet_name      = spoke.name
+        resource_group = spoke.resource_group_name
+        subnet_name    = subnet.name
+      }
+    ]
+  ])
 }
 ```
 
+This enables:
+
+* Iteration at **subnet level**
+* Clean `for_each` usage
+* Consistent key mapping across resources
+
 ---
 
-### 3. Correct Resource Referencing
+### 3. Consistent Key Usage (Critical)
 
-Because of the transformation, resources must reference spokes using:
+All resources use aligned keys:
 
-```hcl
-data.azurerm_virtual_network.spokes[each.value.name].id
+| Resource                       | Key Used                |
+| ------------------------------ | ----------------------- |
+| `var.spokes`                   | `spoke_key`             |
+| `data.azurerm_virtual_network` | `spoke_key`             |
+| `local.spoke_subnets`          | `spoke_key + subnet`    |
+| NSG / Association              | `vnet_name-subnet_name` |
+
+This prevents common Terraform errors such as:
+
+```
+Invalid index
 ```
 
 ---
 
 ### 4. Azure as Source of Truth
 
-Even though `location` exists in variables, the implementation uses:
+Instead of relying on input variables, the implementation uses:
 
 ```hcl
-data.azurerm_virtual_network.spokes[each.value.name].location
+data.azurerm_virtual_network.spokes[spoke_key].location
 ```
 
 This ensures:
 
 * Accuracy
-* No drift between Terraform and Azure
+* No configuration drift
 * Safer deployments
 
 ---
@@ -121,7 +178,8 @@ This ensures:
 * User → Bastion (public endpoint)
 * Bastion → Hub VNet
 * Hub → Spoke VNet (via peering)
-* Spoke → VM (private IP)
+* Spoke → Subnet (NSG enforced)
+* Subnet → VM (private IP)
 
 ---
 
@@ -130,20 +188,11 @@ This ensures:
 * Centralized Azure Bastion deployment
 * Dynamic VNet peering using `for_each`
 * Map-based scalable configuration
-* Data-driven lookup of existing VNets
+* Flattened subnet iteration using `local.tf`
+* NSG per subnet with strict access rules
+* Automatic NSG-to-subnet association
 * No public IPs on virtual machines
-* NSG enforcing Bastion-only access
 * Modular Terraform design
-
----
-
-## Use Cases
-
-* Secure remote access without exposing VMs
-* Multi-VNet enterprise environments
-* Centralized access for Dev / QA / Prod
-* Cost optimization using single Bastion
-* Integration with existing Azure VNets
 
 ---
 
@@ -153,6 +202,7 @@ This ensures:
 azure-bastion-hub-spoke/
 │
 ├── main.tf
+├── local.tf
 ├── data.tf
 ├── variables.tf
 ├── outputs.tf
@@ -172,28 +222,23 @@ azure-bastion-hub-spoke/
 
 ---
 
-## Environment Folder (`env/`)
+## Sample `local.tf`
 
-The `env` directory is used to separate configurations per environment (e.g., `dev`, `prod`, `test`).
-
-### Example: `env/dev/`
-
-* `backend.hcl`
-
-  * Defines remote state configuration (Storage Account, container, key)
-* `terraform.tfvars`
-
-  * Contains environment-specific values such as:
-
-    * application name
-    * location
-    * spoke VNets
-
-This structure allows you to:
-
-* Isolate environments cleanly
-* Use different backends per environment
-* Avoid hardcoding values in Terraform files
+```hcl
+locals {
+  spoke_subnets = flatten([
+    for spoke_key, spoke in var.spokes : [
+      for subnet_key, subnet in spoke.subnets : {
+        spoke_key      = spoke_key
+        subnet_key     = subnet_key
+        vnet_name      = spoke.name
+        resource_group = spoke.resource_group_name
+        subnet_name    = subnet.name
+      }
+    ]
+  ])
+}
+```
 
 ---
 
@@ -202,29 +247,24 @@ This structure allows you to:
 ### Example: `env/dev/terraform.tfvars`
 
 ```hcl
-application_name = "jodur-bastion"
+application_name = "bastion-demo"
 primary_location = "southeastasia"
 
 spokes = {
-  spoke1 = {
-    name                = "jodur-vnet"
-    resource_group_name = "jodur-rg"
-    location            = "southeastasia"
+  spoke_access = {
+    name                = "dev-spoke-access-vnet"
+    resource_group_name = "rg-dev-network"
+
+    subnets = {
+      client = {
+        name = "snet-client"
+      }
+      workload = {
+        name = "snet-workload"
+      }
+    }
   }
 }
-```
-
----
-
-## Backend Configuration
-
-### Example: `env/dev/backend.hcl`
-
-```hcl
-resource_group_name  = "rg-tfstate"
-storage_account_name = "tfstatehubspoke123"
-container_name       = "tfstate"
-key                  = "bastion-hub-spoke-dev.tfstate"
 ```
 
 ---
@@ -243,18 +283,14 @@ Terraform provisions:
 
 ---
 
-### 2. Discover Existing VNets
+### 2. Discover Existing VNets and Subnets
 
 Terraform queries Azure using:
 
 ```hcl
 data "azurerm_virtual_network"
+data "azurerm_subnet"
 ```
-
-This ensures correct:
-
-* Resource IDs
-* Locations
 
 ---
 
@@ -267,18 +303,14 @@ For each spoke:
 
 ---
 
-### 4. Apply Network Security Groups
+### 4. Create and Attach NSG per Subnet
 
-* One NSG per spoke
-* Allows:
+* NSG is created for each subnet
+* NSG is attached using:
 
-  * Port 22 (SSH)
-  * Port 3389 (RDP)
-* Source:
-
-  * Bastion subnet CIDR
-
-> Note: NSG is created but subnet association is not included in this configuration.
+```hcl
+azurerm_subnet_network_security_group_association
+```
 
 ---
 
@@ -314,7 +346,7 @@ terraform destroy -var-file=env/dev/terraform.tfvars
 
 * No public IPs on VMs
 * Bastion is the only entry point
-* NSG restricts inbound traffic
+* NSG restricts inbound traffic per subnet
 * Reduced attack surface
 * Supports Zero Trust architecture
 
@@ -333,7 +365,7 @@ Azure Bastion is billed hourly.
 
 ## Future Improvements
 
-* NSG subnet association
+* Per-subnet custom NSG rules via tfvars
 * Azure Firewall integration
 * Private DNS zones
 * Azure Monitor integration
@@ -347,8 +379,9 @@ Azure Bastion is billed hourly.
 This project demonstrates:
 
 * Hub-and-Spoke architecture
-* Dynamic Terraform design using maps and `for_each`
+* Advanced Terraform patterns using `flatten` and `for_each`
+* Subnet-level security enforcement using NSG
 * Secure Bastion-based access
 * Environment-based configuration management
 
-It reflects real-world scenarios where existing VNets must be securely connected without being re-created.
+It reflects real-world scenarios where existing VNets must be securely connected and managed without re-creating infrastructure.

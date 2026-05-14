@@ -4,6 +4,7 @@ resource "azurerm_virtual_network" "hub_vnet" {
   location            = var.location
   resource_group_name = var.resource_group_name
   address_space       = var.hub_vnet_address_space
+
 }
 
 # Create dedicated subnet for Azure Bastion (must be named AzureBastionSubnet)
@@ -23,7 +24,7 @@ resource "azurerm_public_ip" "bastion_pip" {
   sku                 = "Standard"
 }
 
-/*
+
 # Deploy Azure Bastion host (enables secure RDP/SSH access to VMs via Azure portal)
 resource "azurerm_bastion_host" "bastion" {
   name                = "${var.application_name}-hub"
@@ -36,4 +37,4 @@ resource "azurerm_bastion_host" "bastion" {
     public_ip_address_id = azurerm_public_ip.bastion_pip.id
   }
 }
-*/
+
