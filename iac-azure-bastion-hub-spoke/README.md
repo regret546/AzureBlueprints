@@ -1,10 +1,10 @@
-# Azure Bastion Hub with Dynamic VNet Peering (Terraform)
+# Azure Bastion with Dynamic VNet Peering (Terraform)
 
 ## Overview
 
 This project implements a centralized access architecture in Microsoft Azure using Terraform.
 
-It deploys a Hub virtual network with Azure Bastion and dynamically peers it with multiple **existing VNets (spokes)**.
+It deploys a centralized Azure Bastion environment and dynamically peers it with multiple **existing VNets (spokes)**.
 
 Spoke VNets and their subnets are defined using a **map of objects**, and Terraform dynamically transforms this structure using a `local.tf` file to enable **per-subnet resource creation**.
 
@@ -14,13 +14,21 @@ The solution enables secure, private access to virtual machines without exposing
 
 ## Architecture
 
-![Azure Bastion Hub-Spoke Architecture](images/architecture.png)
+![Azure Bastion Architecture](images/architecture.png)
 
-### Hub VNet
+### Bastion Module
 
-* Hosts Azure Bastion
-* Acts as the centralized access point
-* Deployed via reusable Terraform module
+* Deploys the centralized Azure Bastion environment
+* Acts as the centralized access layer
+* Creates:
+
+  * Bastion VNet
+  * AzureBastionSubnet
+  * Public IP
+  * Azure Bastion Host
+* Reusable Terraform module
+
+---
 
 ### Spoke VNets (Existing)
 
@@ -28,31 +36,39 @@ The solution enables secure, private access to virtual machines without exposing
 * Defined via `spokes` variable
 * Queried dynamically using Terraform data sources
 
-### VNet Peering
+---
+
+### VNet Peering Module
 
 * Fully dynamic using `for_each`
 * Creates:
 
-  * Hub → Spoke peering
-  * Spoke → Hub peering
+  * Bastion → Spoke peering
+  * Spoke → Bastion peering
+* Decoupled into its own reusable Terraform module
 
-### Network Security Groups (NSG)
+---
 
-* Created **per subnet (not per VNet)**
-* Attached directly to each subnet
-* Allows only:
+### NSG Rule Module
 
-  * SSH (22)
-  * RDP (3389)
-* Source is restricted to the **Bastion subnet CIDR**
+* Dedicated module for NSG rule management
+* Intended for subnet-level security enforcement
+* Currently scaffolded for future enhancements
+
+Future implementation may include:
+
+* Dynamic NSG rule creation
+* Per-subnet rule customization
+* Environment-based rule templates
+* Bastion-restricted access policies
 
 ---
 
 ## Naming Convention
 
-This project uses a **generic, Bastion-focused naming convention**:
+This project uses a generic, Bastion-focused naming convention:
 
-```
+```text
 <scope>-<environment>-<role>-<resource>
 ```
 
@@ -60,15 +76,15 @@ This project uses a **generic, Bastion-focused naming convention**:
 
 | Resource       | Example                        |
 | -------------- | ------------------------------ |
-| Hub VNet       | `dev-hub-bastion-vnet`         |
+| Bastion VNet   | `dev-bastion-vnet`             |
 | Spoke VNet     | `dev-spoke-access-vnet`        |
 | Resource Group | `rg-dev-network`               |
-| Subnet         | `snet-client`, `snet-workload` |
+| Subnet         | `snet-client`                  |
 | NSG            | `nsg-dev-spoke-access-client`  |
 
 ### Notes
 
-* `hub` → centralized Bastion layer
+* `bastion` → centralized Bastion layer
 * `spoke` → workload VNets
 * `access` / `bastion-target` → indicates Bastion usage
 * `snet-*` → Azure subnet naming standard
@@ -91,6 +107,7 @@ spokes = {
       client = {
         name = "snet-client"
       }
+
       workload = {
         name = "snet-workload"
       }
@@ -98,6 +115,8 @@ spokes = {
   }
 }
 ```
+
+### Structure
 
 * `spoke_key` → logical identifier (`spoke_access`)
 * `subnet_key` → logical identifier (`client`, `workload`)
@@ -127,7 +146,7 @@ locals {
 
 This enables:
 
-* Iteration at **subnet level**
+* Iteration at subnet level
 * Clean `for_each` usage
 * Consistent key mapping across resources
 
@@ -137,16 +156,15 @@ This enables:
 
 All resources use aligned keys:
 
-| Resource                       | Key Used                |
-| ------------------------------ | ----------------------- |
-| `var.spokes`                   | `spoke_key`             |
-| `data.azurerm_virtual_network` | `spoke_key`             |
-| `local.spoke_subnets`          | `spoke_key + subnet`    |
-| NSG / Association              | `vnet_name-subnet_name` |
+| Resource                       | Key Used             |
+| ------------------------------ | -------------------- |
+| `var.spokes`                   | `spoke_key`          |
+| `data.azurerm_virtual_network` | `spoke_key`          |
+| `local.spoke_subnets`          | `spoke_key + subnet` |
 
 This prevents common Terraform errors such as:
 
-```
+```text
 Invalid index
 ```
 
@@ -154,7 +172,7 @@ Invalid index
 
 ### 4. Azure as Source of Truth
 
-Instead of relying on input variables, the implementation uses:
+Instead of relying on hardcoded input values, the implementation uses Azure data sources:
 
 ```hcl
 data.azurerm_virtual_network.spokes[spoke_key].location
@@ -163,7 +181,7 @@ data.azurerm_virtual_network.spokes[spoke_key].location
 This ensures:
 
 * Accuracy
-* No configuration drift
+* Reduced configuration drift
 * Safer deployments
 
 ---
@@ -178,10 +196,9 @@ This ensures:
 ### Traffic Path
 
 * User → Bastion (public endpoint)
-* Bastion → Hub VNet
-* Hub → Spoke VNet (via peering)
-* Spoke → Subnet (NSG enforced)
-* Subnet → VM (private IP)
+* Bastion → Bastion VNet
+* Bastion VNet → Spoke VNet (via peering)
+* Spoke → VM (private IP)
 
 ---
 
@@ -191,16 +208,17 @@ This ensures:
 * Dynamic VNet peering using `for_each`
 * Map-based scalable configuration
 * Flattened subnet iteration using `local.tf`
-* NSG per subnet with strict access rules
-* Automatic NSG-to-subnet association
+* Modular Terraform architecture
+* Reusable Bastion module
+* Dedicated VNet peering module
+* Future-ready NSG rule module
 * No public IPs on virtual machines
-* Modular Terraform design
 
 ---
 
 ## Project Structure
 
-```
+```text
 azure-bastion-hub-spoke/
 │
 ├── main.tf
@@ -216,7 +234,17 @@ azure-bastion-hub-spoke/
 │       └── terraform.tfvars
 │
 ├── modules/
-│   └── hub/
+│   ├── bastion/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   │
+│   ├── vnet-peering/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   │
+│   └── nsg-rule/
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
@@ -261,6 +289,7 @@ spokes = {
       client = {
         name = "snet-client"
       }
+
       workload = {
         name = "snet-workload"
       }
@@ -273,12 +302,11 @@ spokes = {
 
 ## How It Works
 
-### 1. Deploy Hub and Bastion
+### 1. Deploy Bastion Environment
 
 Terraform provisions:
 
-* Resource Group
-* Hub VNet
+* Bastion VNet
 * AzureBastionSubnet
 * Public IP
 * Azure Bastion
@@ -296,23 +324,26 @@ data "azurerm_subnet"
 
 ---
 
-### 3. Create Dynamic Peering
+### 3. Create Dynamic VNet Peering
 
 For each spoke:
 
-* Hub → Spoke peering
-* Spoke → Hub peering
+* Bastion → Spoke peering
+* Spoke → Bastion peering
+
+Managed through the dedicated `vnet-peering` module.
 
 ---
 
-### 4. Create and Attach NSG per Subnet
+### 4. Future NSG Rule Enforcement
 
-* NSG is created for each subnet
-* NSG is attached using:
+The `nsg-rule` module is reserved for future subnet-level security rule management.
 
-```hcl
-azurerm_subnet_network_security_group_association
-```
+Planned capabilities include:
+
+* Bastion-only access rules
+* Per-subnet rule definitions
+* Dynamic NSG rule assignment
 
 ---
 
@@ -347,10 +378,10 @@ terraform destroy -var-file=env/dev/terraform.tfvars
 ## Security Considerations
 
 * No public IPs on VMs
-* Bastion is the only entry point
-* NSG restricts inbound traffic per subnet
+* Bastion is the centralized access point
 * Reduced attack surface
 * Supports Zero Trust architecture
+* Future subnet-level NSG enforcement
 
 ---
 
@@ -360,14 +391,15 @@ Azure Bastion is billed hourly.
 
 ### Optimization Strategy
 
-* Single centralized Bastion
+* Single centralized Bastion deployment
 * Shared across multiple VNets
 
 ---
 
 ## Future Improvements
 
-* Per-subnet custom NSG rules via tfvars
+* Dynamic NSG rule generation
+* Per-subnet custom security rules
 * Azure Firewall integration
 * Private DNS zones
 * Azure Monitor integration
@@ -380,10 +412,10 @@ Azure Bastion is billed hourly.
 
 This project demonstrates:
 
-* Hub-and-Spoke architecture
 * Advanced Terraform patterns using `flatten` and `for_each`
-* Subnet-level security enforcement using NSG
-* Secure Bastion-based access
-* Environment-based configuration management
+* Modular Terraform design
+* Dynamic VNet peering
+* Centralized Bastion access
+* Scalable environment-based configuration management
 
 It reflects real-world scenarios where existing VNets must be securely connected and managed without re-creating infrastructure.

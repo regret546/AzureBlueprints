@@ -13,8 +13,8 @@ resource "azurerm_resource_group" "hub" {
 }
 
 # Hub module
-module "hub" {
-  source              = "./modules/hub"
+module "bastion" {
+  source              = "./modules/bastion"
   application_name    = var.application_name
   location            = var.primary_location
   resource_group_name = azurerm_resource_group.hub.name
@@ -23,25 +23,23 @@ module "hub" {
   bastion_subnet_prefix  = ["10.200.1.0/27"]
 }
 
-# Hub -> Spoke peering
-resource "azurerm_virtual_network_peering" "hub_to_spoke" {
+#Vnet-peering moduke
+module "vnet-peering" {
   for_each = var.spokes
+  source   = "./modules/vnet-peering"
 
-  name                      = "hub-to-${each.value.name}"
-  resource_group_name       = azurerm_resource_group.hub.name
-  virtual_network_name      = module.hub.vnet_name
-  remote_virtual_network_id = data.azurerm_virtual_network.spokes[each.key].id
+  #Hub
+  hub_resource_group_name       = azurerm_resource_group.hub.name
+  hub_virtual_network_name      = module.bastion.vnet_name
+  hub_remote_virtual_network_id = module.bastion.vnet_id
+
+  #Spoke
+  spoke_name                      = each.value.name
+  spoke_resource_group_name       = each.value.resource_group_name
+  spoke_virtual_network_name      = each.value.name
+  spoke_remote_virtual_network_id = data.azurerm_virtual_network.spokes[each.key].id
 }
 
-# Spoke -> Hub peering
-resource "azurerm_virtual_network_peering" "spoke_to_hub" {
-  for_each = var.spokes
-
-  name                      = "${each.value.name}-to-hub"
-  resource_group_name       = each.value.resource_group_name
-  virtual_network_name      = each.value.name
-  remote_virtual_network_id = module.hub.vnet_id
-}
 
 # Create NSG per subnet
 resource "azurerm_network_security_group" "spoke_nsg" {
@@ -62,7 +60,7 @@ resource "azurerm_network_security_group" "spoke_nsg" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_ranges    = ["22", "3389"]
-    source_address_prefix      = module.hub.bastion_subnet_prefix[0]
+    source_address_prefix      = module.bastion.bastion_subnet_prefix[0]
     destination_address_prefix = "*"
   }
 }
