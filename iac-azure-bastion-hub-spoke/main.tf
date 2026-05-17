@@ -41,37 +41,18 @@ module "vnet-peering" {
 }
 
 
-# Create NSG per subnet
-resource "azurerm_network_security_group" "spoke_nsg" {
-  for_each = {
-    for s in local.spoke_subnets :
-    "${s.vnet_name}-${s.subnet_name}" => s
+#NIC NSG module
+module "nic_nsg" {
+  source = "./modules/nic-nsg"
+
+  bastion_subnet_cidr = module.bastion.bastion_subnet_prefix
+
+  allowed_ports = ["22", "3389"]
+
+  tags = {
+    Environment = "dev"
+    ManagedBy   = "Terraform"
   }
 
-  name                = "nsg-${var.application_name}-access"
-  location            = data.azurerm_virtual_network.spokes[each.value.spoke_key].location
-  resource_group_name = each.value.resource_group
-
-  security_rule {
-    name                       = "Allow-Bastion-RDP-SSH"
-    priority                   = 100
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_ranges    = ["22", "3389"]
-    source_address_prefix      = module.bastion.bastion_subnet_prefix[0]
-    destination_address_prefix = "*"
-  }
-}
-
-# Attach NSG to subnet
-resource "azurerm_subnet_network_security_group_association" "spoke_assoc" {
-  for_each = {
-    for s in local.spoke_subnets :
-    "${s.vnet_name}-${s.subnet_name}" => s
-  }
-
-  subnet_id                 = data.azurerm_subnet.spokes[each.key].id
-  network_security_group_id = azurerm_network_security_group.spoke_nsg[each.key].id
+  vm_nics = var.vm_nics
 }
